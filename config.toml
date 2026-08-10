@@ -1,3 +1,4 @@
-share_dir ="/tmp/test_share"
+share_dir ="/home/mnski/Share" 
  bind_addr="0.0.0.0" 
- port=8099
+ port=8099 
+ inline_pdf=true
