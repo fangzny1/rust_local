@@ -223,7 +223,7 @@ async fn upload(Path(dir):Path<String>,State(share_dir): State<AppState>,mut mul
       let data =field.bytes().await.map_err(|_|{StatusCode::BAD_REQUEST})?;
     
     let safe_name =file_name.replace(['/','\\'], "");
-  println!("{}",&safe_name);
+    println!("{}",&safe_name);
     let save_file =std::path::Path::new(&dir).join(&safe_name);
      
     tokio::fs::write(&save_file, data).await.map_err(|_|{StatusCode::INTERNAL_SERVER_ERROR})?;
