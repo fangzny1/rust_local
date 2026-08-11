@@ -1,12 +1,12 @@
 
 
-use std::{fs::{ File, TryLockError::Error, canonicalize}, sync::Arc};
+use std::{fs::{ File, TryLockError::Error, canonicalize}, io::ErrorKind::NotFound, sync::Arc};
 use clap::ValueHint::Url;
-use tokio::{fs::ReadDir, io::{AsyncReadExt, join}};
+use tokio::{fs::ReadDir, io::{AsyncReadExt, AsyncWriteExt, join}};
 use axum::{
-    Router, body::{self, Body}, extract::{Path, State}, handler, http::{HeaderMap, StatusCode, Uri, header}, response::{Html, IntoResponse}, routing::get
+    Router, body::{self, Body}, extract::{Multipart, Path, State, multipart}, handler, http::{HeaderMap, StatusCode, Uri, header}, response::{Html, IntoResponse, Response}, routing::{get, post}
 };
-use tokio_util::{io::ReaderStream, time::delay_queue::Key};
+use tokio_util::io::ReaderStream;
 use clap::Parser;
 #[derive(serde::Deserialize)]
 pub struct Congfig
@@ -72,7 +72,7 @@ async fn main() ->Result<(), Box<dyn std::error::Error>>{
        None=>String::from("nope"),
      };
     
-     reset_check(final_conf, &reset).await.unwrap();
+     reset_check(final_conf, &reset).await?;
 
      if check_conf(){
         let data_conf =std::fs::read_to_string("./config.toml")?;
@@ -89,6 +89,7 @@ async fn main() ->Result<(), Box<dyn std::error::Error>>{
             .route("/", get(||async{"Hello world" }))
             .route("/file/{*id}", get(file))
             .route("/file/", get(nope_id))
+            .route("/upload/{*dir}", post(upload))
             .with_state(appState_config)
          
             ;
@@ -103,13 +104,12 @@ async fn main() ->Result<(), Box<dyn std::error::Error>>{
      }
     Ok(())
 }
-async  fn nope_id(State(share_dir): State<AppState>)->impl IntoResponse 
-{
-file(Path(String::from("")),State(share_dir)).await
+async fn nope_id(State(share_dir): State<AppState>) ->  Result<impl IntoResponse, StatusCode> {
+    file(Path(String::from("")), State(share_dir)).await
 }
 
 
-async fn file(Path(id):Path<String>,State(share_dir): State<AppState>) -> impl IntoResponse  {
+async fn file(Path(id): Path<String>, State(share_dir): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
     //接受用户传来文件路径id
     let user_file =&id;
     let root= share_dir.share_dir;
@@ -120,16 +120,21 @@ async fn file(Path(id):Path<String>,State(share_dir): State<AppState>) -> impl I
     let  user_path=std::path::Path::new(&root).join(user_file);
     
     //路径"归一化"，防止..等跳出设定的目录
-    let final_user_path =canonicalize(user_path).unwrap();
+    let final_user_path =canonicalize(user_path).map_err(|_|StatusCode::NOT_FOUND)?;
+   
+
+ 
+
 
     if final_user_path.is_dir(){
-         let mut target_file= tokio::fs::read_dir(final_user_path).await.unwrap();
+         let mut target_file= tokio::fs::read_dir(final_user_path).await.map_err(|_|StatusCode::NOT_FOUND)? ;
              let mut string_push:String =String::new();
                //获取文件路径下文件列表
-              while  let Some(entry)=target_file.next_entry().await.unwrap() {
+              while  let Some(entry)=target_file.next_entry().await.map_err(|_|StatusCode::NOT_FOUND)? {
                let path_string =entry.path().display().to_string();
               let file_name =entry.file_name();
-              let name_str =file_name.to_str().unwrap_or("未知文件名");
+              let name_str = file_name.to_str().unwrap_or("未知文件名");
+                
               let final_path_to_html=match !user_file.is_empty(){
                  true=>{
                      format!(" <a href=\"/file/{user_file}/{name_str}\">{name_str}</a>")
@@ -142,11 +147,11 @@ async fn file(Path(id):Path<String>,State(share_dir): State<AppState>) -> impl I
               string_push.push_str("\n");
             }
    
-    return  Html(string_push).into_response();
+    return  Ok(Html(string_push).into_response());
     };
     if final_user_path.is_file(){
          
-            let mut target_file= tokio::fs::File::open(&final_user_path).await.unwrap();
+            let  target_file= tokio::fs::File::open(&final_user_path).await.map_err(|_|StatusCode::NOT_FOUND)? ;
             let file_option =final_user_path.extension().and_then(|e|e.to_str());
             let ext =match file_option{
               Some(v)=>v,
@@ -154,11 +159,11 @@ async fn file(Path(id):Path<String>,State(share_dir): State<AppState>) -> impl I
                 "txt"
               }
             };
-             return  download_processor(target_file,final_user_path.file_name().unwrap().display().to_string(),ext,inline_pdf).await.into_response();
+             return Ok(download_processor(target_file,final_user_path.file_name().unwrap().display().to_string(),ext,inline_pdf).await.into_response());
         // 获取包含路径的完整 PathBuf
        
     };
-  Html("<h1>找不到文件</h1>".to_string()).into_response()
+  Err(StatusCode::NOT_FOUND) 
 }
 async  fn download_processor(path:tokio::fs::File,name:String,ext:&str,inline_pdf:bool) ->impl IntoResponse{
    let stream =tokio_util::io::ReaderStream::new(path);
@@ -206,4 +211,22 @@ async  fn download_processor(path:tokio::fs::File,name:String,ext:&str,inline_pd
  };
 (header,body)
 
+}
+
+
+async fn upload(Path(dir):Path<String>,State(share_dir): State<AppState>,mut multipart:Multipart,)->Result<impl IntoResponse,StatusCode>{
+  while let Some(field)=multipart.next_field().await.map_err(|_|{StatusCode::NOT_FOUND})?{
+      let root =canonicalize(&share_dir.share_dir).map_err(|_|{StatusCode::NOT_FOUND})?;
+      let dir =std::path::Path::new(&root).join(&dir);
+      let dir =canonicalize(dir).map_err(|_|{StatusCode::NOT_FOUND})?;
+      let file_name =field.file_name().unwrap_or("未命名").to_string();
+      let data =field.bytes().await.map_err(|_|{StatusCode::BAD_REQUEST})?;
+    
+    let safe_name =file_name.replace(['/','\\'], "");
+  println!("{}",&safe_name);
+    let save_file =std::path::Path::new(&dir).join(&safe_name);
+     
+    tokio::fs::write(&save_file, data).await.map_err(|_|{StatusCode::INTERNAL_SERVER_ERROR})?;
+  }   
+Ok(StatusCode::OK)
 }
