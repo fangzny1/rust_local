@@ -1,7 +1,7 @@
 # RUST_LOCAL
 ## Rust local是使用rust写的局域网网盘工具，提供配置选项实现部分文件直接浏览器内预览的功能
 **安装和使用**
-使用`git clone`将项目克隆后使用`cargo build --release`编译对应的可执行文件，在`./target/release`下找到`rust-web`即可
+- 使用`git clone`将项目克隆后使用`cargo build --release`编译对应的可执行文件，在`./target/release`下找到`rust-web`即可
 
 ## Linux下使用
 - 使用`./rust-web`即可，第一次会自动生成配置，可看下面的配置文件信息修改
