@@ -2,11 +2,13 @@
 
 use std::{fs::{ File, TryLockError::Error, canonicalize}, io::ErrorKind::NotFound, sync::Arc};
 use clap::ValueHint::Url;
+use serde::Serialize;
 use tokio::{fs::ReadDir, io::{AsyncReadExt, AsyncWriteExt, join}};
 use axum::{
-    Router, body::{self, Body}, extract::{Multipart, Path, State, multipart}, handler, http::{HeaderMap, StatusCode, Uri, header}, response::{Html, IntoResponse, Response}, routing::{get, post}
+    Router, body::{self, Body}, extract::{Multipart, Path, State, multipart}, handler, http::{HeaderMap, StatusCode, Uri, header}, response::{Html, IntoResponse, Response}, routing::{get, post},Json
 };
 use tokio_util::io::ReaderStream;
+use tower_http::cors::CorsLayer;
 use clap::Parser;
 #[derive(serde::Deserialize)]
 pub struct Congfig
@@ -16,6 +18,15 @@ pub struct Congfig
   port:u32,
   inline_pdf:bool,
 }
+
+#[derive(serde::Deserialize,Serialize)]
+struct FileEntry{
+  name:String,
+  is_dir:bool,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  size:Option<u64>,
+}
+
 
 #[derive(Parser)]
 struct Arg{
@@ -91,7 +102,8 @@ async fn main() ->Result<(), Box<dyn std::error::Error>>{
             .route("/file/", get(nope_id))
             .route("/upload/{*dir}", post(upload))
             .with_state(appState_config)
-         
+            .layer(CorsLayer::permissive())
+
             ;
         let addr_plus_port=format!("{bind_addr}:{port}");
         let listener =tokio::net::TcpListener::bind(&addr_plus_port).await?;
@@ -128,26 +140,16 @@ async fn file(Path(id): Path<String>, State(share_dir): State<AppState>) -> Resu
 
     if final_user_path.is_dir(){
          let mut target_file= tokio::fs::read_dir(final_user_path).await.map_err(|_|StatusCode::NOT_FOUND)? ;
-             let mut string_push:String =String::new();
+            let mut entries =Vec::new();
                //获取文件路径下文件列表
               while  let Some(entry)=target_file.next_entry().await.map_err(|_|StatusCode::NOT_FOUND)? {
-               let path_string =entry.path().display().to_string();
-              let file_name =entry.file_name();
-              let name_str = file_name.to_str().unwrap_or("未知文件名");
+               let name =entry.file_name().to_string_lossy().to_string();
+               let meta =entry.metadata().await.map_err(|_|StatusCode::NOT_FOUND)?;
+               entries.push(FileEntry { name, is_dir: meta.is_dir(), size: if meta.is_dir(){None}else{Some(meta.len())} });
                 
-              let final_path_to_html=match !user_file.is_empty(){
-                 true=>{
-                     format!(" <a href=\"/file/{user_file}/{name_str}\">{name_str}</a>")
-                     }
-                    false=>{
-                       format!(" <a href=\"/file/{user_file}{name_str}\">{name_str}</a>")
-                    }
-                     }      ;
-                string_push.push_str(&final_path_to_html);
-              string_push.push_str("\n");
-            }
    
-    return  Ok(Html(string_push).into_response());
+              }
+           return Ok(Json(entries).into_response());
     };
     if final_user_path.is_file(){
          

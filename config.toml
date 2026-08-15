@@ -1,4 +1,4 @@
-share_dir ="/tf/pdf/"
+share_dir ="/root/Downloads/"
  bind_addr="0.0.0.0" 
  port=8099 
  inline_pdf=true
