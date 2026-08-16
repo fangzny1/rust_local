@@ -5,6 +5,7 @@
   margin: 0 auto;
   padding: 2rem;
   font-weight: normal;
+ 
 }
 
 a,
@@ -16,6 +17,15 @@ a,
 }
 
 @media (hover: hover) {
+  :root{
+    --bg:#1e1e1e;
+  }
+  body{
+     background-image: url('../images/taihou.png');
+     background-size: cover;
+     background-position: center;
+     background-repeat: no-repeat;
+  }
   a:hover {
     background-color: hsla(160, 100%, 37%, 0.2);
   }
